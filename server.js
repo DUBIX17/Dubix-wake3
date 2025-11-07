@@ -9,7 +9,7 @@ app.use(express.raw({ type: "*/*", limit: "10mb" })); // for binary audio data
 app.use(express.static("public"));
 
 // === CONFIG ===
-const WS_TARGET_URL = "wss://your-target-websocket-server-url"; // <-- change this
+const WS_TARGET_URL = "wss://dubix-wake.onrender.com/ws-audio"; // <-- change this
 let lastWsResponses = [];
 
 // Connect to target WebSocket
