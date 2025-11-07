@@ -8,7 +8,7 @@ const app = express();
 app.use(express.static(path.join(process.cwd(), "public")));
 
 // === CONFIG ===
-const WS_TARGET_URL = process.env.WS_URL || "wss://your-target-websocket-server-url";
+const WS_TARGET_URL = process.env.WS_URL || "wss://dubix-wake.onrender.com/ws-audio";
 const PORT = process.env.PORT || 3000;
 
 let lastWsResponses = []; // array of JSON strings (or parsed objects if you prefer)
