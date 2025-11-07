@@ -16,27 +16,38 @@ button { padding:10px 15px; margin:5px; }
 <div id="log"></div>
 
 <script>
-let mediaRecorder;
-let interval;
+let workletNode, audioCtx, interval;
 const logEl = document.getElementById("log");
 
 function log(t){ logEl.textContent += t + "\n"; logEl.scrollTop = logEl.scrollHeight; }
 
 document.getElementById("startBtn").onclick = async () => {
   const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-  const ctx = new AudioContext({ sampleRate: 16000 });
-  const src = ctx.createMediaStreamSource(stream);
-  const processor = ctx.createScriptProcessor(4096, 1, 1);
-  src.connect(processor);
-  processor.connect(ctx.destination);
-  log("🎤 Started capturing...");
+  audioCtx = new AudioContext({ sampleRate: 16000 });
+  await audioCtx.audioWorklet.addModule(URL.createObjectURL(new Blob([`
+    class PCMWorklet extends AudioWorkletProcessor {
+      process(inputs, outputs, parameters) {
+        const input = inputs[0][0];
+        if (input) {
+          const pcm16 = new Int16Array(input.length);
+          for (let i = 0; i < input.length; i++) pcm16[i] = input[i] * 0x7fff;
+          this.port.postMessage(pcm16.buffer, [pcm16.buffer]);
+        }
+        return true;
+      }
+    }
+    registerProcessor('pcm-worklet', PCMWorklet);
+  `], {type: 'application/javascript'})));
 
-  processor.onaudioprocess = e => {
-    const input = e.inputBuffer.getChannelData(0);
-    const pcm16 = new Int16Array(input.length);
-    for (let i = 0; i < input.length; i++) pcm16[i] = input[i] * 0x7fff;
-    fetch("/stream", { method: "POST", body: pcm16.buffer });
+  const source = audioCtx.createMediaStreamSource(stream);
+  workletNode = new AudioWorkletNode(audioCtx, 'pcm-worklet');
+  workletNode.port.onmessage = e => {
+    fetch("/stream", { method: "POST", body: e.data });
   };
+
+  source.connect(workletNode);
+  workletNode.connect(audioCtx.destination);
+  log("🎤 Started capturing (AudioWorklet)...");
 
   interval = setInterval(async () => {
     const res = await fetch("/poll");
@@ -44,16 +55,17 @@ document.getElementById("startBtn").onclick = async () => {
     if (json.length > 0) {
       log("🔁 WS Response: " + JSON.stringify(json, null, 2));
     }
-  }, 1000);
+  }, 600);
 
   document.getElementById("stopBtn").onclick = () => {
     clearInterval(interval);
-    processor.disconnect();
-    src.disconnect();
-    ctx.close();
+    if (source) source.disconnect();
+    if (workletNode) workletNode.disconnect();
+    if (audioCtx) audioCtx.close();
     log("🛑 Stopped.");
   };
 };
 </script>
+
 </body>
 </html>
