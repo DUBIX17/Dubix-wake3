@@ -65,7 +65,7 @@ app.get("/poll", (req, res) => {
 // === Clear WS responses every 3s ===
 setInterval(() => {
   lastWsResponses = [];
-}, 3000);
+}, 1000);
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`✅ HTTPS proxy running on port ${PORT}`));
