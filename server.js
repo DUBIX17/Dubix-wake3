@@ -6,7 +6,7 @@ const app = express();
 app.use(express.static("public"));
 
 // === CONFIG ===
-const WS_TARGET_URL = "wss://dubix-wake.onrender.com"; // <-- change this
+const WS_TARGET_URL = "wss://dubix-wake.onrender.com/ws-audio"; // <-- change this
 let lastWsResponses = [];
 
 // Connect to WebSocket target
