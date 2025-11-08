@@ -28,7 +28,7 @@ function connectWS() {
     if (!isBinary) {
       try {
         const txt = data.toString();
-        lastWsResponse = txt; // overwrite previous
+        lastWsResponse = txt;
         console.log("[WS] Received JSON response (len:", txt.length + ")");
 
         // Reset the 1s clear timer whenever a new response arrives
@@ -39,7 +39,6 @@ function connectWS() {
             lastWsResponse = null;
           }
         }, 1000);
-
       } catch (err) {
         console.warn("[WS] Failed to parse incoming message:", err.message);
       }
@@ -59,41 +58,34 @@ function connectWS() {
 }
 connectWS();
 
-// === POST /stream ===
+// === POST /stream (REAL-TIME CHUNK FORWARDING) ===
 app.post("/stream", (req, res) => {
   const clientId = req.headers["x-client-id"] || req.query.clientId || null;
-  const chunks = [];
+  console.log(`[HTTP] /stream started${clientId ? " for clientId=" + clientId : ""}`);
+
   let totalBytes = 0;
 
   req.on("data", (chunk) => {
-    const buf = Buffer.from(chunk);
-    chunks.push(buf);
-    totalBytes += buf.length;
+    totalBytes += chunk.length;
+
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      // Forward chunk immediately
+      ws.send(chunk, { binary: true }, (err) => {
+        if (err) console.error("[WS] send error:", err.message || err);
+      });
+    } else {
+      console.warn("[HTTP] WebSocket not connected — dropping chunk");
+    }
   });
 
   req.on("end", () => {
-    const body = Buffer.concat(chunks, totalBytes);
-    if (!body || body.length === 0) {
-      console.log("[HTTP] /stream received empty body");
-      return res.status(400).send("Empty body");
-    }
-
-    console.log(`[HTTP] /stream received ${body.length} bytes${clientId ? " for clientId="+clientId : ""}`);
-
-    if (ws && ws.readyState === WebSocket.OPEN) {
-      ws.send(body, { binary: true }, (err) => {
-        if (err) console.error("[WS] send error:", err.message || err);
-      });
-      res.status(200).json({ ok: true, bytes: body.length, clientId });
-    } else {
-      console.log("[HTTP] WebSocket not connected");
-      res.status(503).send("WebSocket not connected");
-    }
+    console.log(`[HTTP] /stream finished, total ${totalBytes} bytes streamed${clientId ? " for clientId=" + clientId : ""}`);
+    res.status(200).json({ ok: true, streamedBytes: totalBytes, clientId });
   });
 
   req.on("error", (err) => {
-    console.error("[HTTP] request error:", err.message || err);
-    res.status(500).send("Request error");
+    console.error("[HTTP] stream error:", err.message || err);
+    res.status(500).send("Stream error");
   });
 });
 
@@ -104,7 +96,7 @@ app.get("/poll", (req, res) => {
 
   if (lastWsResponse) {
     const out = [lastWsResponse];
-    lastWsResponse = null; // clear after serving
+    lastWsResponse = null;
     res.status(200).send(JSON.stringify(out));
   } else {
     res.status(200).send("[]");
