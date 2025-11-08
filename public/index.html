@@ -2,72 +2,50 @@
 <html>
 <head>
 <meta charset="UTF-8">
-<title>Dubix Wake Word Stream</title>
+<title>Dubix HTTPS Wakeword</title>
 <style>
 body { font-family:sans-serif; text-align:center; margin:1rem; }
-#log { background:#111; color:#0f0; white-space:pre-wrap; padding:1em; height:200px; overflow:auto; }
+#log { background:#111; color:#0f0; padding:1em; height:200px; overflow:auto; white-space:pre-wrap; }
+button { margin:0.5em; padding:10px 15px; }
 </style>
 </head>
 <body>
-<h2>🎤 Dubix HTTPS Wake Word Site</h2>
+<h2>🎙 Dubix HTTPS Wakeword</h2>
 <button id="startBtn">Start Stream</button>
 <button id="stopBtn">Stop</button>
 <div id="log"></div>
 
 <script>
-const SERVER = location.origin; // or "https://yourapp.onrender.com"
+const SERVER = location.origin;
 let audioCtx, workletNode, pollInterval;
 
-function log(m){ 
-  const el=document.getElementById("log");
-  el.textContent += m + "\n"; 
-  el.scrollTop = el.scrollHeight;
-}
+function log(m){ const el=document.getElementById("log"); el.textContent += m+"\n"; el.scrollTop=el.scrollHeight; }
 
 document.getElementById("startBtn").onclick = async () => {
-  const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-  audioCtx = new AudioContext({ sampleRate: 16000 });
-  await audioCtx.audioWorklet.addModule(URL.createObjectURL(new Blob([`
-    class PCMWorklet extends AudioWorkletProcessor {
-      constructor() {
-        super();
-        this.buffer = [];
-        this.samples = 0;
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio:true });
+    audioCtx = new AudioContext({ sampleRate:16000 });
+    await audioCtx.resume();
+    await audioCtx.audioWorklet.addModule('/pcm-worklet.js');
+
+    const source = audioCtx.createMediaStreamSource(stream);
+    workletNode = new AudioWorkletNode(audioCtx, 'pcm-worklet');
+    workletNode.port.onmessage = e => {
+      fetch(`${SERVER}/stream`, { method:"POST", body:e.data });
+    };
+    source.connect(workletNode);
+
+    log("🎤 Streaming started...");
+    pollInterval = setInterval(async ()=>{
+      const res = await fetch(`${SERVER}/poll`);
+      if(res.ok){
+        const data = await res.json();
+        if(data.length) log("🔁 Server: " + JSON.stringify(data));
       }
-      process(inputs) {
-        const input = inputs[0][0];
-        if (!input) return true;
-        this.buffer.push(...input);
-        this.samples += input.length;
-        if (this.samples >= 3200) { // 200ms @16kHz
-          const pcm16 = new Int16Array(this.buffer.length);
-          for (let i=0;i<this.buffer.length;i++) pcm16[i] = this.buffer[i]*0x7fff;
-          this.port.postMessage(pcm16.buffer, [pcm16.buffer]);
-          this.buffer = [];
-          this.samples = 0;
-        }
-        return true;
-      }
-    }
-    registerProcessor('pcm-worklet', PCMWorklet);
-  `], {type:'application/javascript'})));
-
-  const source = audioCtx.createMediaStreamSource(stream);
-  workletNode = new AudioWorkletNode(audioCtx, 'pcm-worklet');
-  workletNode.port.onmessage = e => {
-    fetch(\`\${SERVER}/stream\`, { method: "POST", body: e.data });
-  };
-  source.connect(workletNode);
-
-  log("🎙 Streaming started");
-
-  pollInterval = setInterval(async ()=>{
-    const res = await fetch(\`\${SERVER}/poll\`);
-    if(res.ok){
-      const data = await res.json();
-      if(data.length) log("🔁 Server: "+JSON.stringify(data));
-    }
-  }, 800);
+    }, 800);
+  } catch(err){
+    log("⚠️ Error: " + err.message);
+  }
 };
 
 document.getElementById("stopBtn").onclick = ()=>{
