@@ -62,22 +62,33 @@ connectWS();
 // === POST /stream ===
 app.post("/stream", (req, res) => {
   const clientId = req.headers["x-client-id"] || req.query.clientId || null;
+  const chunks = [];
   let totalBytes = 0;
 
   req.on("data", (chunk) => {
-    totalBytes += chunk.length;
-
-    // Stream each incoming chunk to the WebSocket in real-time
-    if (ws && ws.readyState === WebSocket.OPEN) {
-      ws.send(chunk, { binary: true }, (err) => {
-        if (err) console.error("[WS] send error:", err.message || err);
-      });
-    }
+    const buf = Buffer.from(chunk);
+    chunks.push(buf);
+    totalBytes += buf.length;
   });
 
   req.on("end", () => {
-    console.log(`[HTTP] /stream finished (${totalBytes} bytes${clientId ? " for clientId="+clientId : ""})`);
-    res.status(200).json({ ok: true, bytes: totalBytes, clientId });
+    const body = Buffer.concat(chunks, totalBytes);
+    if (!body || body.length === 0) {
+      console.log("[HTTP] /stream received empty body");
+      return res.status(400).send("Empty body");
+    }
+
+    console.log(`[HTTP] /stream received ${body.length} bytes${clientId ? " for clientId="+clientId : ""}`);
+
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(body, { binary: true }, (err) => {
+        if (err) console.error("[WS] send error:", err.message || err);
+      });
+      res.status(200).json({ ok: true, bytes: body.length, clientId });
+    } else {
+      console.log("[HTTP] WebSocket not connected");
+      res.status(503).send("WebSocket not connected");
+    }
   });
 
   req.on("error", (err) => {
