@@ -116,7 +116,7 @@ setInterval(() => {
     console.log("[CLEANUP] Clearing", lastWsResponses.length, "stored WS response(s)");
     lastWsResponses = [];
   }
-}, 3000);
+}, 300);
 
 // Health
 app.get("/health", (req, res) => {
