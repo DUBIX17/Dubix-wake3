@@ -44,7 +44,7 @@ document.getElementById("startBtn").onclick = async () => {
     if (json.length > 0) {
       log("🔁 WS Response: " + JSON.stringify(json, null, 2));
     }
-  }, 700);
+  }, 150);
 
   document.getElementById("stopBtn").onclick = () => {
     clearInterval(interval);
