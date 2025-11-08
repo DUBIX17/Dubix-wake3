@@ -26,7 +26,10 @@ document.getElementById("startBtn").onclick = async () => {
   const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
   const ctx = new AudioContext({ sampleRate: 16000 });
   const src = ctx.createMediaStreamSource(stream);
-  const processor = ctx.createScriptProcessor(4096, 1, 1);
+
+  // ✅ Changed buffer size from 4096 to 512
+  const processor = ctx.createScriptProcessor(512, 1, 1);
+
   src.connect(processor);
   processor.connect(ctx.destination);
   log("🎤 Started capturing...");
