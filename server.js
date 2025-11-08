@@ -28,7 +28,7 @@ function connectWS() {
     if (!isBinary) {
       try {
         const txt = data.toString();
-        lastWsResponse = txt;
+        lastWsResponse = txt; // overwrite previous
         console.log("[WS] Received JSON response (len:", txt.length + ")");
 
         // Reset the 1s clear timer whenever a new response arrives
@@ -39,6 +39,7 @@ function connectWS() {
             lastWsResponse = null;
           }
         }, 1000);
+
       } catch (err) {
         console.warn("[WS] Failed to parse incoming message:", err.message);
       }
@@ -58,34 +59,30 @@ function connectWS() {
 }
 connectWS();
 
-// === POST /stream (REAL-TIME CHUNK FORWARDING) ===
+// === POST /stream ===
 app.post("/stream", (req, res) => {
   const clientId = req.headers["x-client-id"] || req.query.clientId || null;
-  console.log(`[HTTP] /stream started${clientId ? " for clientId=" + clientId : ""}`);
-
   let totalBytes = 0;
 
   req.on("data", (chunk) => {
     totalBytes += chunk.length;
 
+    // Stream each incoming chunk to the WebSocket in real-time
     if (ws && ws.readyState === WebSocket.OPEN) {
-      // Forward chunk immediately
       ws.send(chunk, { binary: true }, (err) => {
         if (err) console.error("[WS] send error:", err.message || err);
       });
-    } else {
-      console.warn("[HTTP] WebSocket not connected — dropping chunk");
     }
   });
 
   req.on("end", () => {
-    console.log(`[HTTP] /stream finished, total ${totalBytes} bytes streamed${clientId ? " for clientId=" + clientId : ""}`);
-    res.status(200).json({ ok: true, streamedBytes: totalBytes, clientId });
+    console.log(`[HTTP] /stream finished (${totalBytes} bytes${clientId ? " for clientId="+clientId : ""})`);
+    res.status(200).json({ ok: true, bytes: totalBytes, clientId });
   });
 
   req.on("error", (err) => {
-    console.error("[HTTP] stream error:", err.message || err);
-    res.status(500).send("Stream error");
+    console.error("[HTTP] request error:", err.message || err);
+    res.status(500).send("Request error");
   });
 });
 
@@ -96,7 +93,7 @@ app.get("/poll", (req, res) => {
 
   if (lastWsResponse) {
     const out = [lastWsResponse];
-    lastWsResponse = null;
+    lastWsResponse = null; // clear after serving
     res.status(200).send(JSON.stringify(out));
   } else {
     res.status(200).send("[]");
