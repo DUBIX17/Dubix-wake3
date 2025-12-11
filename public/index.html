@@ -3,15 +3,55 @@
 <head>
   <meta charset="UTF-8">
   <title>Alex Wake Word + Deepgram STT</title>
+  <style>
+    body {
+      background-color: #121212;
+      color: #fff;
+      font-family: Arial, sans-serif;
+      text-align: center;
+      padding: 2rem;
+    }
+    button {
+      font-size: 1rem;
+      padding: 0.5rem 1rem;
+      margin: 0.5rem;
+      border: none;
+      border-radius: 5px;
+      cursor: pointer;
+      color: #fff;
+    }
+    #startBtn {
+      background-color: #007bff;
+    }
+    #stopBtn {
+      background-color: #dc3545;
+    }
+    pre {
+      background-color: #1e1e1e;
+      padding: 1rem;
+      border-radius: 5px;
+      text-align: left;
+      max-width: 600px;
+      margin: 1rem auto;
+      overflow-x: auto;
+    }
+  </style>
 </head>
 <body>
   <h1>Alex Wake Word + STT Test</h1>
   <button id="startBtn">Start Microphone</button>
+  <button id="stopBtn">Stop Microphone</button>
   <p id="status">Status: Idle</p>
-  <pre id="transcript"></pre>
+  <pre id="transcript">Transcript:</pre>
 
   <script>
-    const ws = new WebSocket('ws://' + location.hostname + ':8765');
+    const ws = new WebSocket('wss://' + location.host);
+
+    let audioCtx;
+    let processor;
+    let source;
+    let stream;
+    let sending = false;
 
     ws.onopen = () => {
       document.getElementById('status').innerText = 'Status: Connected';
@@ -24,7 +64,6 @@
           document.getElementById('transcript').innerText = 'Transcript: ' + data.transcript;
         }
       } catch {
-        // wake word detection
         if (msg.data === 'Alex detected') {
           document.getElementById('status').innerText = 'Status: Alex detected, recording...';
         }
@@ -32,20 +71,37 @@
     };
 
     const startBtn = document.getElementById('startBtn');
+    const stopBtn = document.getElementById('stopBtn');
 
     startBtn.onclick = async () => {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const audioCtx = new AudioContext({ sampleRate: 16000 });
-      const source = audioCtx.createMediaStreamSource(stream);
-      const processor = audioCtx.createScriptProcessor(1024, 1, 1);
+      if (sending) return;
+      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      audioCtx = new AudioContext({ sampleRate: 16000 });
+      source = audioCtx.createMediaStreamSource(stream);
+      processor = audioCtx.createScriptProcessor(1024, 1, 1);
 
       source.connect(processor);
       processor.connect(audioCtx.destination);
 
       processor.onaudioprocess = (e) => {
-        const input = e.inputBuffer.getChannelData(0);
-        ws.send(Float32Array.from(input).buffer);
+        if (!sending) return;
+        let input = e.inputBuffer.getChannelData(0);
+        input = Float32Array.from(input, v => Math.max(-1, Math.min(1, v)));
+        ws.send(input.buffer);
       };
+
+      sending = true;
+      document.getElementById('status').innerText = 'Status: Sending audio...';
+    };
+
+    stopBtn.onclick = () => {
+      if (!sending) return;
+      sending = false;
+      if (processor) processor.disconnect();
+      if (source) source.disconnect();
+      if (stream) stream.getTracks().forEach(track => track.stop());
+      if (audioCtx) audioCtx.close();
+      document.getElementById('status').innerText = 'Status: Idle';
     };
   </script>
 </body>
