@@ -7,6 +7,7 @@ import fs from 'fs';
 import os from 'os';
 import { randomUUID } from 'crypto';
 import fetch from 'node-fetch';
+import http from 'http';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -20,22 +21,26 @@ async function loadModel() {
 }
 loadModel();
 
-// Express to serve HTML
 const app = express();
 app.use(express.static(path.join(__dirname, 'public')));
-const HTTP_PORT = process.env.HTTP_PORT || 3000;
-app.listen(HTTP_PORT, () => console.log(`HTTP server on http://0.0.0.0:${HTTP_PORT}`));
 
-// WebSocket server
-const PORT = process.env.PORT || 8765;
-const wss = new WebSocketServer({ port: PORT });
-console.log(`WebSocket server running on ws://0.0.0.0:${PORT}`);
+// Render sets the port in process.env.PORT
+const PORT = process.env.PORT || 3000;
+
+// Create HTTP server to attach WebSocket
+const server = http.createServer(app);
+server.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+
+// Attach WebSocket server to the same HTTP server
+const wss = new WebSocketServer({ server });
+
+console.log(`WebSocket server attached to HTTP server on port ${PORT}`);
 
 const THRESHOLD = 0.7;
-const DG_MODEL = 'general';
-const DG_LANG = 'en-US';
+const DG_MODEL = 'nova-3';
+const DG_LANG = 'en';
 const SAMPLE_RATE = 16000;
-const SILENCE_MAX_MS = 2000;
+const SILENCE_MAX_MS = 1000;
 
 wss.on('connection', (ws) => {
   console.log('Client connected');
@@ -50,14 +55,10 @@ wss.on('connection', (ws) => {
     if (!recording || audioBuffer.length === 0 || isTranscribing) return;
     isTranscribing = true;
 
-    // Concatenate collected audio into one Float32Array
     const floatBuffer = Float32Array.from(audioBuffer.flat());
-
-    // Write Float32 buffer to temp file
     const tmpFile = path.join(os.tmpdir(), `${randomUUID()}.raw`);
     fs.writeFileSync(tmpFile, Buffer.from(floatBuffer.buffer));
 
-    // POST to Deepgram as linear32
     let transcript = '';
     try {
       const fileData = fs.readFileSync(tmpFile);
@@ -89,7 +90,6 @@ wss.on('connection', (ws) => {
   ws.on('message', async (data) => {
     try {
       if (typeof data === 'string') {
-        // Text wake word
         if (data.trim().toLowerCase() === 'alex') {
           ws.send('Alex detected');
           recording = true;
@@ -99,7 +99,6 @@ wss.on('connection', (ws) => {
         const floatArray = new Float32Array(data.buffer);
 
         if (!recording) {
-          // Run wake word detection
           const inputTensor = new ort.Tensor('float32', floatArray, [1, floatArray.length, 1]);
           const results = await session.run({ input: inputTensor });
           const outputName = Object.keys(results)[0];
@@ -111,11 +110,9 @@ wss.on('connection', (ws) => {
             audioBuffer = [];
           }
         } else {
-          // Collect audio
           audioBuffer.push(Array.from(floatArray));
           lastAudioTime = Date.now();
 
-          // Silence timer
           clearTimeout(silenceTimer);
           silenceTimer = setTimeout(() => {
             const now = Date.now();
