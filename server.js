@@ -6,7 +6,6 @@ import { fileURLToPath } from 'url';
 import fs from 'fs';
 import os from 'os';
 import { randomUUID } from 'crypto';
-import fetch from 'node-fetch';
 import http from 'http';
 
 const __filename = fileURLToPath(import.meta.url);
