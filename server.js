@@ -1,121 +1,117 @@
-// server.js
-import express from "express";
-import { WebSocket } from "ws";
-import { Buffer } from "buffer";
-import path from "path";
+import express from 'express';
+import { WebSocketServer } from 'ws';
+import ort from 'onnxruntime-node';
+import path from 'path';
+import { fileURLToPath } from 'url';
+import axios from 'axios';
 
-const app = express();
-app.use(express.static(path.join(process.cwd(), "public")));
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
-// === CONFIG ===
-const WS_TARGET_URL = process.env.WS_URL || "wss://dubix-wake.onrender.com/ws-audio";
-const PORT = process.env.PORT || 3000;
+const MODEL_PATH = path.join(__dirname, 'ALEKS!!.onnx');
+let session;
 
-// Only keep the *latest* WS response
-let lastWsResponse = null;
-let clearTimeoutHandle = null;
-
-// === WebSocket setup & reconnect ===
-let ws = null;
-function connectWS() {
-  console.log("[WS] Connecting to", WS_TARGET_URL);
-  ws = new WebSocket(WS_TARGET_URL);
-  ws.binaryType = "arraybuffer";
-
-  ws.on("open", () => console.log("[WS] Connected"));
-
-  ws.on("message", (data, isBinary) => {
-    if (!isBinary) {
-      try {
-        const txt = data.toString();
-        lastWsResponse = txt; // overwrite previous
-        console.log("[WS] Received JSON response (len:", txt.length + ")");
-
-        // Reset the 1s clear timer whenever a new response arrives
-        if (clearTimeoutHandle) clearTimeout(clearTimeoutHandle);
-        clearTimeoutHandle = setTimeout(() => {
-          if (lastWsResponse) {
-            console.log("[CLEANUP] Clearing last WS response");
-            lastWsResponse = null;
-          }
-        }, 1000);
-
-      } catch (err) {
-        console.warn("[WS] Failed to parse incoming message:", err.message);
-      }
-    } else {
-      console.log("[WS] Ignored binary message from upstream (not expected)");
-    }
-  });
-
-  ws.on("close", (code) => {
-    console.log(`[WS] Closed (${code}) - reconnecting in 2s`);
-    setTimeout(connectWS, 2000);
-  });
-
-  ws.on("error", (err) => {
-    console.error("[WS] Error:", err?.message || err);
-  });
+async function loadModel() {
+  session = await ort.InferenceSession.create(MODEL_PATH);
+  console.log('ONNX model loaded!');
 }
-connectWS();
+loadModel();
 
-// === POST /stream ===
-app.post("/stream", (req, res) => {
-  const clientId = req.headers["x-client-id"] || req.query.clientId || null;
-  const chunks = [];
-  let totalBytes = 0;
+// Express to serve HTML
+const app = express();
+app.use(express.static(path.join(__dirname, 'public')));
+const HTTP_PORT = process.env.HTTP_PORT || 3000;
+app.listen(HTTP_PORT, () => console.log(`HTTP server on http://0.0.0.0:${HTTP_PORT}`));
 
-  req.on("data", (chunk) => {
-    const buf = Buffer.from(chunk);
-    chunks.push(buf);
-    totalBytes += buf.length;
-  });
+// WebSocket server
+const PORT = process.env.PORT || 8765;
+const wss = new WebSocketServer({ port: PORT });
+console.log(`WebSocket server running on ws://0.0.0.0:${PORT}`);
 
-  req.on("end", () => {
-    const body = Buffer.concat(chunks, totalBytes);
-    if (!body || body.length === 0) {
-      console.log("[HTTP] /stream received empty body");
-      return res.status(400).send("Empty body");
-    }
+const THRESHOLD = 0.7;
 
-    console.log(`[HTTP] /stream received ${body.length} bytes${clientId ? " for clientId="+clientId : ""}`);
+// Deepgram API config
+const DEEPGRAM_API_KEY = process.env.DEEPGRAM_API_KEY;
+const DEEPGRAM_URL = 'https://api.deepgram.com/v1/listen?model=general&language=en-US';
 
-    if (ws && ws.readyState === WebSocket.OPEN) {
-      ws.send(body, { binary: true }, (err) => {
-        if (err) console.error("[WS] send error:", err.message || err);
-      });
-      res.status(200).json({ ok: true, bytes: body.length, clientId });
-    } else {
-      console.log("[HTTP] WebSocket not connected");
-      res.status(503).send("WebSocket not connected");
-    }
-  });
+// Silence detection: stop after ~2 sec of low amplitude
+const SILENCE_THRESHOLD = 0.01;
+const SILENCE_MAX_MS = 2000;
 
-  req.on("error", (err) => {
-    console.error("[HTTP] request error:", err.message || err);
-    res.status(500).send("Request error");
-  });
-});
+wss.on('connection', (ws) => {
+  console.log('Client connected');
 
-// === GET /poll ===
-app.get("/poll", (req, res) => {
-  res.setHeader("Content-Type", "application/json");
-  res.setHeader("Access-Control-Allow-Origin", "*");
+  let recording = false;
+  let audioBuffer = [];
+  let lastAudioTime = 0;
+  let silenceTimer;
 
-  if (lastWsResponse) {
-    const out = [lastWsResponse];
-    lastWsResponse = null; // clear after serving
-    res.status(200).send(JSON.stringify(out));
-  } else {
-    res.status(200).send("[]");
+  function processAudioStop() {
+    if (!recording || audioBuffer.length === 0) return;
+
+    // Concatenate collected audio into one Float32Array
+    const floatBuffer = Float32Array.from(audioBuffer.flat());
+
+    // Send Float32 audio to Deepgram (no conversion to PCM16)
+    axios.post(DEEPGRAM_URL, floatBuffer.buffer, {
+      headers: {
+        'Authorization': `Token ${DEEPGRAM_API_KEY}`,
+        'Content-Type': 'audio/l32; rate=16000'  // Float32 PCM
+      },
+      responseType: 'json'
+    }).then(res => {
+      ws.send(JSON.stringify({ transcript: res.data?.channel?.alternatives?.[0]?.transcript || '' }));
+    }).catch(err => {
+      console.error('Deepgram error:', err.message);
+    });
+
+    // Reset recording state
+    recording = false;
+    audioBuffer = [];
+    clearTimeout(silenceTimer);
   }
-});
 
-// === Health ===
-app.get("/health", (req, res) => {
-  res.json({ ok: true, wsConnected: ws && ws.readyState === WebSocket.OPEN });
-});
+  ws.on('message', async (data) => {
+    try {
+      if (typeof data === 'string') {
+        // Text wake word
+        if (data.trim().toLowerCase() === 'alex') {
+          ws.send('Alex detected');
+          recording = true;
+          audioBuffer = [];
+        }
+      } else if (data instanceof Buffer) {
+        const floatArray = new Float32Array(data.buffer);
 
-app.listen(PORT, () => {
-  console.log(`Server listening on port ${PORT} (WS -> ${WS_TARGET_URL})`);
+        if (!recording) {
+          // Run wake word detection
+          const inputTensor = new ort.Tensor('float32', floatArray, [1, floatArray.length, 1]);
+          const results = await session.run({ input: inputTensor });
+          const outputName = Object.keys(results)[0];
+          const prob = results[outputName].data[0];
+
+          if (prob >= THRESHOLD) {
+            ws.send('Alex detected');
+            recording = true;
+            audioBuffer = [];
+          }
+        } else {
+          // Collect audio while recording
+          audioBuffer.push(Array.from(floatArray));
+          lastAudioTime = Date.now();
+
+          // Silence timer
+          clearTimeout(silenceTimer);
+          silenceTimer = setTimeout(() => {
+            const now = Date.now();
+            if (now - lastAudioTime >= SILENCE_MAX_MS) processAudioStop();
+          }, SILENCE_MAX_MS);
+        }
+      }
+    } catch (err) {
+      console.error('Error processing message:', err);
+    }
+  });
+
+  ws.on('close', () => console.log('Client disconnected'));
 });
