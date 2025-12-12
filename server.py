@@ -13,8 +13,8 @@ from openwakeword import Model
 # ---------------- CONFIG ----------------
 CHUNK_SIZE = 1280
 SAMPLE_RATE = 16000
-SILENCE_MAX = 1.0
-SILENCE_THRESHOLD = 300
+SILENCE_MAX = 1.0          # seconds of silence before stopping recording
+SILENCE_THRESHOLD = 300    # amplitude threshold for silence detection
 WAKEWORD_THRESHOLD = 0.5
 
 DEEPGRAM_API_KEY = os.getenv("DEEPGRAM_API_KEY")
@@ -71,7 +71,7 @@ async def websocket_handler(request):
     ws = web.WebSocketResponse()
     await ws.prepare(request)
 
-    # Tell client which wakewords loaded
+    # Tell client which wakewords are loaded
     await ws.send_str(json.dumps({"loaded_models": owwModel.wakeword_names}))
 
     sample_rate = SAMPLE_RATE
@@ -102,6 +102,7 @@ async def websocket_handler(request):
             # ---------------- WAKEWORD DETECTION ----------------
             if not recording:
 
+                # OWW expects float32 normalized [-1,1]
                 predictions = owwModel.predict(data.astype(np.float32) / 32768.0)
                 print("[Wakeword Predictions]", predictions)
 
@@ -131,9 +132,7 @@ async def websocket_handler(request):
                     print("[Silence] Recording ended")
 
                     wav_bytes = np.array(audio_buffer, dtype=np.int16).tobytes()
-
                     transcript = send_to_deepgram(wav_bytes)
-
                     await ws.send_str(json.dumps({"transcript": transcript}))
 
                     recording = False
@@ -154,22 +153,23 @@ if __name__ == "__main__":
 
     base_path = os.path.dirname(os.path.abspath(__file__))
 
-    # ---------------- LOAD MODEL ----------------
+    # ---------------- LOAD CUSTOM MODEL ----------------
     model_path = os.path.join(base_path, "Aleks!!.onnx")
-    owwModel = Model()
-    owwModel.add_wakeword("Alex", model_path)
+
+    # Force CPU provider to avoid GPU errors
+    os.environ["CUDA_VISIBLE_DEVICES"] = ""  # disables CUDA
+    owwModel = Model(wakeword_models=[model_path], inference_framework="onnx")
     print(f"[Model] Loaded custom wakeword: {model_path}")
 
-    # ---------------- Run server ----------------
+    # ---------------- RUN SERVER ----------------
     app = web.Application()
     app.add_routes([
         web.get("/ws", websocket_handler),
         web.get("/", static_file_handler)
     ])
 
-    # Render exposes HTTPS automatically, you just bind to PORT
+    # Use PORT env variable or default to 10000
     port = int(os.getenv("PORT", 10000))
     print(f"[Server] Starting on port {port}")
-
     web.run_app(app, host="0.0.0.0", port=port)
         
