@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Wake Word Streaming Test</title>
+</head>
+<body>
+<h1>Wake Word Streaming Test</h1>
+
+<!-- Buttons -->
+<button id="enableBtn">Enable & Stream</button>
+<button id="disableBtn" disabled>Disable & Stop</button>
+
+<!-- Logs -->
+<pre id="log"></pre>
+
+<script>
+let ws;
+let mediaStream;
+let audioContext;
+let processor;
+
+const log = document.getElementById("log");
+
+function appendLog(msg) {
+    log.textContent += msg + "\n";
+}
+
+// Convert Float32 audio to Int16 PCM
+function floatTo16BitPCM(float32Array) {
+    const buffer = new ArrayBuffer(float32Array.length * 2);
+    const view = new DataView(buffer);
+    let offset = 0;
+    for (let i = 0; i < float32Array.length; i++, offset += 2) {
+        let s = Math.max(-1, Math.min(1, float32Array[i]));
+        view.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
+    }
+    return buffer;
+}
+
+// Enable audio & start streaming
+document.getElementById("enableBtn").onclick = async () => {
+    try {
+        // Open WebSocket
+        ws = new WebSocket(`wss://${window.location.host}/ws`);
+        ws.onopen = () => appendLog("WebSocket connected");
+        ws.onmessage = (event) => appendLog("Received: " + event.data);
+        ws.onerror = (err) => appendLog("WebSocket error: " + err);
+
+        // Capture microphone
+        audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
+        mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        const source = audioContext.createMediaStreamSource(mediaStream);
+
+        // Audio processing
+        processor = audioContext.createScriptProcessor(1024, 1, 1);
+        source.connect(processor);
+        processor.connect(audioContext.destination);
+
+        processor.onaudioprocess = (e) => {
+            const channelData = e.inputBuffer.getChannelData(0);
+            const int16Data = floatTo16BitPCM(channelData);
+            if (ws.readyState === WebSocket.OPEN) {
+                ws.send(int16Data);
+            }
+        };
+
+        // Update buttons
+        document.getElementById("enableBtn").disabled = true;
+        document.getElementById("disableBtn").disabled = false;
+        appendLog("Audio enabled & streaming started");
+    } catch (err) {
+        appendLog("Error enabling audio: " + err);
+    }
+};
+
+// Disable audio & stop streaming
+document.getElementById("disableBtn").onclick = () => {
+    if (processor) processor.disconnect();
+    if (audioContext) audioContext.close();
+    if (mediaStream) mediaStream.getTracks().forEach(track => track.stop());
+    if (ws) ws.close();
+
+    document.getElementById("enableBtn").disabled = false;
+    document.getElementById("disableBtn").disabled = true;
+    appendLog("Audio disabled & streaming stopped");
+};
+</script>
+</body>
+</html>
