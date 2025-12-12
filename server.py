@@ -7,7 +7,7 @@ import json
 import os
 import time
 import asyncio
-import requests
+import requests  # Kept for compatibility, but using aiohttp for async
 from openwakeword import Model
 
 # ---------------- CONFIG ----------------
@@ -16,6 +16,7 @@ SAMPLE_RATE = 16000
 SILENCE_MAX = 1.0          # seconds of silence before stopping recording
 SILENCE_THRESHOLD = 300    # amplitude threshold for silence detection
 WAKEWORD_THRESHOLD = 0.5
+MAX_RECORD_SECONDS = 20    # Max recording length to prevent infinite talk
 
 DEEPGRAM_API_KEY = os.getenv("DEEPGRAM_API_KEY")
 DG_MODEL = "nova-3"
@@ -25,6 +26,7 @@ DG_LANG = "en"
 recording = False
 audio_buffer = []
 last_non_silent_time = 0
+recording_start_time = 0
 
 WAKEWORD_MAP = {
     "Alex": "Alex",
@@ -35,38 +37,34 @@ WAKEWORD_MAP = {
 def is_silence(int16_array):
     return np.max(np.abs(int16_array)) < SILENCE_THRESHOLD
 
-
-def send_to_deepgram(audio_bytes: bytes):
+async def send_to_deepgram(audio_bytes: bytes):
     try:
-        resp = requests.post(
-            f"https://api.deepgram.com/v1/listen"
-            f"?model={DG_MODEL}&language={DG_LANG}"
-            f"&encoding=linear16&sample_rate={SAMPLE_RATE}&punctuate=true",
-            headers={
-                "Authorization": f"Token {DEEPGRAM_API_KEY}",
-                "Content-Type": "application/octet-stream"
-            },
-            data=audio_bytes
-        )
-
-        result = resp.json()
-        transcript = (
-            result.get("results", {})
-                  .get("channels", [{}])[0]
-                  .get("alternatives", [{}])[0]
-                  .get("transcript", "")
-        )
-        print(f"[Deepgram Transcript] {transcript}")
-        return transcript
-
+        url = f"https://api.deepgram.com/v1/listen?model={DG_MODEL}&language={DG_LANG}&encoding=linear16&sample_rate={SAMPLE_RATE}&punctuate=true"
+        headers = {
+            "Authorization": f"Token {DEEPGRAM_API_KEY}",
+            "Content-Type": "application/octet-stream"
+        }
+        async with aiohttp.ClientSession() as session:
+            async with session.post(url, headers=headers, data=audio_bytes) as resp:
+                if resp.status != 200:
+                    print(f"[Deepgram Error] Status: {resp.status}")
+                    return ""
+                result = await resp.json()
+                transcript = (
+                    result.get("results", {})
+                    .get("channels", [{}])[0]
+                    .get("alternatives", [{}])[0]
+                    .get("transcript", "")
+                )
+                print(f"[Deepgram Transcript] {transcript}")
+                return transcript
     except Exception as e:
         print(f"[Deepgram Error] {e}")
         return ""
 
-
 # ---------------- WEBSOCKET HANDLER ----------------
 async def websocket_handler(request):
-    global recording, audio_buffer, last_non_silent_time
+    global recording, audio_buffer, last_non_silent_time, recording_start_time, owwModel
 
     ws = web.WebSocketResponse()
     await ws.prepare(request)
@@ -116,6 +114,7 @@ async def websocket_handler(request):
 
                     recording = True
                     audio_buffer = []
+                    recording_start_time = time.time()
                     last_non_silent_time = time.time()
 
                     await ws.send_str(json.dumps({"activations": ["Alex"]}))
@@ -128,11 +127,12 @@ async def websocket_handler(request):
                 if not is_silence(data):
                     last_non_silent_time = time.time()
 
-                if time.time() - last_non_silent_time >= SILENCE_MAX:
-                    print("[Silence] Recording ended")
+                current_time = time.time()
+                if (current_time - last_non_silent_time >= SILENCE_MAX) or (current_time - recording_start_time > MAX_RECORD_SECONDS):
+                    print("[Silence or Max Duration] Recording ended")
 
                     wav_bytes = np.array(audio_buffer, dtype=np.int16).tobytes()
-                    transcript = send_to_deepgram(wav_bytes)
+                    transcript = await send_to_deepgram(wav_bytes)
                     await ws.send_str(json.dumps({"transcript": transcript}))
 
                     recording = False
@@ -140,11 +140,9 @@ async def websocket_handler(request):
 
     return ws
 
-
 # ---------------- STATIC FILE ----------------
 async def static_file_handler(request):
     return web.FileResponse("./streaming_client.html")
-
 
 # ---------------- MAIN ----------------
 if __name__ == "__main__":
@@ -158,7 +156,7 @@ if __name__ == "__main__":
 
     # Force CPU provider to avoid GPU errors
     os.environ["CUDA_VISIBLE_DEVICES"] = ""  # disables CUDA
-    owwModel = Model(wakeword_models=[model_path], inference_framework="onnx")
+    owwModel = Model(custom_wakeword_models=[model_path], inference_framework="onnx")
     print(f"[Model] Loaded custom wakeword: {model_path}")
 
     # ---------------- RUN SERVER ----------------
@@ -172,4 +170,3 @@ if __name__ == "__main__":
     port = int(os.getenv("PORT", 10000))
     print(f"[Server] Starting on port {port}")
     web.run_app(app, host="0.0.0.0", port=port)
-        
