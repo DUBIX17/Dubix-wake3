@@ -28,7 +28,7 @@ last_non_silent_time = 0
 
 # Map trained keyword → expected keyword
 WAKEWORD_MAP = {
-    "Aleks": "Alex"
+    "Aleks!!": "Alex"
 }
 
 # ---------------- HELPERS ----------------
