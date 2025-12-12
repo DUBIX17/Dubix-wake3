@@ -1,0 +1,5 @@
+aiohttp==3.9.0
+numpy==1.24.0
+resampy==0.4.2
+requests==2.31.0
+openwakeword==0.1.4  # replace with your actual installed version
