@@ -6,7 +6,7 @@ import argparse
 import json
 import os
 import time
-import uuid
+import asyncio
 import requests
 from openwakeword import Model
 
@@ -113,16 +113,39 @@ async def static_file_handler(request):
 # ---------------- MAIN ----------------
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--model_path", type=str, default="", help="Path to wake word model")
-    parser.add_argument("--inference_framework", type=str, default="tflite", help="onnx or tflite")
+    parser.add_argument("--inference_framework", type=str, default=None, help="onnx or tflite (optional)")
     args = parser.parse_args()
 
-    # Load OpenWakeWord model
-    if args.model_path:
-        owwModel = Model(wakeword_models=[args.model_path], inference_framework=args.inference_framework)
-    else:
-        owwModel = Model(inference_framework=args.inference_framework)
+    # Get server.py directory
+    base_path = os.path.dirname(os.path.abspath(__file__))
 
+    # Auto-detect model file
+    model_path = None
+    model_type = None
+    for filename in os.listdir(base_path):
+        if filename.lower().endswith(".onnx"):
+            model_path = os.path.join(base_path, filename)
+            model_type = "onnx"
+            break
+        elif filename.lower().endswith(".tflite"):
+            model_path = os.path.join(base_path, filename)
+            model_type = "tflite"
+            break
+
+    # If user specified framework, override auto-detect
+    if args.inference_framework:
+        model_type = args.inference_framework
+
+    # Load model
+    if model_path and os.path.exists(model_path):
+        owwModel = Model(wakeword_models=[model_path], inference_framework=model_type)
+        print(f"Loaded wake word model from: {model_path} ({model_type})")
+    else:
+        owwModel = Model(inference_framework=model_type or "tflite")
+        print("No local model found. Loaded default built-in models.")
+
+    # Start server
     app = web.Application()
     app.add_routes([web.get('/ws', websocket_handler), web.get('/', static_file_handler)])
     web.run_app(app, host="0.0.0.0", port=9000)
+    
