@@ -32,7 +32,7 @@ recording_start_time = 0
 
 WAKEWORD_MAP = {
     "Alex": "Alex",
-    "Aleks!!": "Alex",
+    "ALEKS!!": "Alex",
 }
 
 # ==========================================================
@@ -181,7 +181,7 @@ if __name__ == "__main__":
     os.environ["ORT_DISABLE_CUDA"] = "1"
 
     base_path = os.path.dirname(os.path.abspath(__file__))
-    custom_model_path = os.path.join(base_path, "Aleks!!.onnx")
+    custom_model_path = os.path.join(base_path, "ALEKS!!.onnx")
 
     # -------- VERIFY MODEL EXISTS --------
     if not os.path.exists(custom_model_path):
