@@ -1,8 +1,9 @@
-aiohttp
 numpy
 resampy
+aiohttp
+requests
+onnxruntime
+openwakeword==0.6.0
+tqdm
 scipy
 soundfile
-requests
-openwakeword==0.6.0
-
