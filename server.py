@@ -197,7 +197,7 @@ if __name__ == "__main__":
 
     # -------- LOAD OPENWAKEWORD MODEL (CORRECT API) --------
     owwModel = Model(
-        wakeword_models=[model_path],
+       custom_wakeword_models=[model_path],
         inference_framework="onnx"
     )
 
