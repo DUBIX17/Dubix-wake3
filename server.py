@@ -2,18 +2,19 @@ import aiohttp
 from aiohttp import web
 import numpy as np
 import resampy
-import argparse
 import json
 import os
 import time
-import asyncio
 from openwakeword import Model
 
-# ---------------- CONFIG ----------------
-CHUNK_SIZE = 1280
+# ==========================================================
+# CONFIG
+# ==========================================================
 SAMPLE_RATE = 16000
-SILENCE_MAX = 1.0          # seconds
-SILENCE_THRESHOLD = 300
+CHUNK_SIZE = 1280
+
+SILENCE_MAX = 1.0          # seconds of silence before stopping
+SILENCE_THRESHOLD = 300    # amplitude threshold
 WAKEWORD_THRESHOLD = 0.5
 MAX_RECORD_SECONDS = 20
 
@@ -21,7 +22,9 @@ DEEPGRAM_API_KEY = os.getenv("DEEPGRAM_API_KEY")
 DG_MODEL = "nova-3"
 DG_LANG = "en"
 
-# ---------------- STATE ----------------
+# ==========================================================
+# STATE
+# ==========================================================
 recording = False
 audio_buffer = []
 last_non_silent_time = 0
@@ -32,16 +35,21 @@ WAKEWORD_MAP = {
     "Aleks!!": "Alex",
 }
 
-# ---------------- HELPERS ----------------
-def is_silence(int16_array):
+# ==========================================================
+# HELPERS
+# ==========================================================
+def is_silence(int16_array: np.ndarray) -> bool:
     return np.max(np.abs(int16_array)) < SILENCE_THRESHOLD
 
 
-async def send_to_deepgram(audio_bytes: bytes):
+async def send_to_deepgram(audio_bytes: bytes) -> str:
     url = (
-        f"https://api.deepgram.com/v1/listen"
-        f"?model={DG_MODEL}&language={DG_LANG}"
-        f"&encoding=linear16&sample_rate={SAMPLE_RATE}&punctuate=true"
+        "https://api.deepgram.com/v1/listen"
+        f"?model={DG_MODEL}"
+        f"&language={DG_LANG}"
+        "&encoding=linear16"
+        f"&sample_rate={SAMPLE_RATE}"
+        "&punctuate=true"
     )
 
     headers = {
@@ -66,14 +74,17 @@ async def send_to_deepgram(audio_bytes: bytes):
             print("[Deepgram Transcript]", transcript)
             return transcript
 
-
-# ---------------- WEBSOCKET ----------------
+# ==========================================================
+# WEBSOCKET HANDLER
+# ==========================================================
 async def websocket_handler(request):
-    global recording, audio_buffer, last_non_silent_time, recording_start_time
+    global recording, audio_buffer
+    global last_non_silent_time, recording_start_time
 
     ws = web.WebSocketResponse()
     await ws.prepare(request)
 
+    # Send loaded wakewords to client
     await ws.send_str(json.dumps({
         "loaded_models": owwModel.wakeword_names
     }))
@@ -82,26 +93,35 @@ async def websocket_handler(request):
 
     async for msg in ws:
 
+        # Client sends sample rate
         if msg.type == aiohttp.WSMsgType.TEXT:
             try:
                 client_sample_rate = int(msg.data)
-            except:
+            except ValueError:
                 pass
 
+        # Audio chunk
         elif msg.type == aiohttp.WSMsgType.BINARY:
 
             audio_bytes = msg.data
+
+            # Ensure int16 alignment
             if len(audio_bytes) % 2:
                 audio_bytes += b"\x00"
 
             data = np.frombuffer(audio_bytes, dtype=np.int16)
 
+            # Resample if needed
             if client_sample_rate != SAMPLE_RATE:
                 data = resampy.resample(
-                    data, client_sample_rate, SAMPLE_RATE
+                    data,
+                    client_sample_rate,
+                    SAMPLE_RATE
                 ).astype(np.int16)
 
-            # -------- WAKEWORD --------
+            # ==================================================
+            # WAKEWORD DETECTION
+            # ==================================================
             if not recording:
                 predictions = owwModel.predict(
                     data.astype(np.float32) / 32768.0
@@ -125,7 +145,9 @@ async def websocket_handler(request):
                         "activations": ["Alex"]
                     }))
 
-            # -------- RECORDING --------
+            # ==================================================
+            # RECORDING MODE
+            # ==================================================
             if recording:
                 audio_buffer.extend(data.tolist())
 
@@ -140,10 +162,12 @@ async def websocket_handler(request):
                     print("[Recording stopped]")
 
                     wav_bytes = np.array(
-                        audio_buffer, dtype=np.int16
+                        audio_buffer,
+                        dtype=np.int16
                     ).tobytes()
 
                     transcript = await send_to_deepgram(wav_bytes)
+
                     await ws.send_str(json.dumps({
                         "transcript": transcript
                     }))
@@ -153,27 +177,29 @@ async def websocket_handler(request):
 
     return ws
 
-
-# ---------------- STATIC FILE ----------------
+# ==========================================================
+# STATIC FILE
+# ==========================================================
 async def static_file_handler(request):
     return web.FileResponse("./streaming_client.html")
 
-
-# ---------------- MAIN ----------------
+# ==========================================================
+# MAIN
+# ==========================================================
 if __name__ == "__main__":
 
-    # Force CPU only (Render has no GPU)
+    # -------- FORCE CPU (Render has no GPU) --------
     os.environ["CUDA_VISIBLE_DEVICES"] = ""
     os.environ["ORT_DISABLE_CUDA"] = "1"
 
     base_path = os.path.dirname(os.path.abspath(__file__))
     model_path = os.path.join(base_path, "Aleks!!.onnx")
 
-    # ✅ CORRECT API
-    openwakeword.Model(wakeword_models=[
-                                                os.path.join("openwakeword", "resources", "models", model_path)
-                                            ], inference_framework="onnx")
-
+    # -------- LOAD OPENWAKEWORD MODEL (CORRECT API) --------
+    owwModel = Model(
+        wakeword_models=[model_path],
+        inference_framework="onnx"
+    )
 
     print("[Loaded wakewords]", owwModel.wakeword_names)
 
@@ -184,7 +210,7 @@ if __name__ == "__main__":
     ])
 
     port = int(os.getenv("PORT", 10000))
-    print(f"[Server] Listening on {port}")
+    print(f"[Server] Listening on port {port}")
 
     web.run_app(app, host="0.0.0.0", port=port)
-            
+    
