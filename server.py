@@ -193,11 +193,12 @@ if __name__ == "__main__":
     os.environ["ORT_DISABLE_CUDA"] = "1"
 
     base_path = os.path.dirname(os.path.abspath(__file__))
-    model_path = os.path.join(base_path, "Aleks!!.onnx")
+    custom_model_path = os.path.join(base_path, "Aleks!!.onnx")
 
-    # -------- LOAD OPENWAKEWORD MODEL (CORRECT API) --------
+    # -------- LOAD CUSTOM WAKEWORD ONLY --------
     owwModel = Model(
-       custom_wakeword_models=[model_path],
+        custom_wakeword_models=[custom_model_path],
+        use_builtin_models=False,      # <-- critical: disable default models
         inference_framework="onnx"
     )
 
