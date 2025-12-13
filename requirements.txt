@@ -6,4 +6,4 @@ tqdm
 scipy
 soundfile
 requests
-skylearn
+sklearn
