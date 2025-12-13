@@ -2,4 +2,4 @@ aiohttp
 numpy
 resampy
 requests
-openwakeword  # replace with your actual installed version
+# openwakeword  # replace with your actual installed version
