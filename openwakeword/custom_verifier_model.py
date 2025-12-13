@@ -13,19 +13,17 @@
 # limitations under the License.
 
 # Imports
-import collections
 import os
-import pickle
-from typing import List, Union
-
+from tqdm import tqdm
+import collections
+import openwakeword
 import numpy as np
 import scipy
+import pickle
+
 from sklearn.linear_model import LogisticRegression
 from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import FunctionTransformer, StandardScaler
-from tqdm import tqdm
-
-import openwakeword
 
 
 # Define functions to prepare data for speaker dependent verifier model
@@ -62,7 +60,7 @@ def get_reference_clip_features(
     # Get predictions
     for _ in range(N):
         # Load clip
-        if isinstance(reference_clip, str):
+        if type(reference_clip) == str:
             sr, dat = scipy.io.wavfile.read(reference_clip)
         else:
             dat = reference_clip
@@ -114,8 +112,8 @@ def train_verifier_model(features: np.ndarray, labels: np.ndarray):
 
 
 def train_custom_verifier(
-        positive_reference_clips: List[Union[str, os.PathLike]],
-        negative_reference_clips: List[Union[str, os.PathLike]],
+        positive_reference_clips: str,
+        negative_reference_clips: str,
         output_path: str,
         model_name: str,
         **kwargs
@@ -125,11 +123,11 @@ def train_custom_verifier(
     from a single user.
 
     Args:
-        positive_reference_clips (List[Union[str, os.PathLike]]): The path(s) to single-channel 16khz, 16-bit WAV files
+        positive_reference_clips (str): The path to a directory containing single-channel 16khz, 16-bit WAV files
                                         of the target wake word/phrase.
-        negative_reference_clips (List[Union[str, os.PathLike]]): The path(s) to single-channel 16khz, 16-bit WAV files
+        negative_reference_clips (str): The path to a directory containing single-channel 16khz, 16-bit WAV files
                                         of miscellaneous speech not containing the target wake word/phrase.
-        output_path (str): The location to save the trained verifier model (as a Python pickle file (.pkl))
+        output_path (str): The location to save the trained verifier model (as a scikit-learn .joblib file)
         model_name (str): The name or path of the trained openWakeWord model that the verifier model will be
                           based on. If only a name, it must be one of the pre-trained models included in the
                           openWakeWord release.
@@ -154,9 +152,9 @@ def train_custom_verifier(
          for i in tqdm(positive_reference_clips, desc="Processing positive reference clips")]
     )
     if positive_features.shape[0] == 0:
-        raise ValueError("The positive features were not created! Make sure that"
+        raise ValueError("The positive features were created! Make sure that"
                          " the positive reference clips contain the appropriate audio"
-                         " for the desired model.")
+                         " for the desired model")
 
     # Get features from negative reference clips
     negative_features = np.vstack(
@@ -173,5 +171,4 @@ def train_custom_verifier(
 
     # Save logistic regression model to specified output location
     print("Done!")
-    with open(output_path, "wb") as f:
-        pickle.dump(lr_model, f)
+    pickle.dump(lr_model, open(output_path, "wb"))

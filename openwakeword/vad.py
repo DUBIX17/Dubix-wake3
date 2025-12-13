@@ -63,20 +63,18 @@ class VAD():
                     "resources",
                     "models",
                     "silero_vad.onnx"
-                 ),
-                 n_threads: int = 1
+                 )
                  ):
         """Initialize the VAD model object.
 
             Args:
                 model_path (str): The path to the Silero VAD ONNX model.
-                n_threads (int): The number of threads to use for the VAD model.
         """
 
         # Initialize the ONNX model
         sessionOptions = ort.SessionOptions()
-        sessionOptions.inter_op_num_threads = n_threads
-        sessionOptions.intra_op_num_threads = n_threads
+        sessionOptions.inter_op_num_threads = 1
+        sessionOptions.intra_op_num_threads = 1
         self.model = ort.InferenceSession(model_path, sess_options=sessionOptions,
                                           providers=["CPUExecutionProvider"])
 
