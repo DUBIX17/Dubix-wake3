@@ -4,4 +4,5 @@ resampy
 scipy
 soundfile
 requests
-openwakeword
+openwakeword==0.6.0
+
