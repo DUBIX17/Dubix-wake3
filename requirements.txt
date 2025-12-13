@@ -4,4 +4,4 @@ resampy
 scipy
 soundfile
 requests
-
+openwakeword
