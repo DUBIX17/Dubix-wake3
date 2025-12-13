@@ -13,8 +13,8 @@ from openwakeword import Model
 SAMPLE_RATE = 16000
 CHUNK_SIZE = 1280
 
-SILENCE_MAX = 1.0          # seconds of silence before stopping
-SILENCE_THRESHOLD = 300    # amplitude threshold
+SILENCE_MAX = 1.0          # seconds before stopping recording
+SILENCE_THRESHOLD = 300    # amplitude threshold for silence
 WAKEWORD_THRESHOLD = 0.5
 MAX_RECORD_SECONDS = 20
 
@@ -104,24 +104,17 @@ async def websocket_handler(request):
         elif msg.type == aiohttp.WSMsgType.BINARY:
 
             audio_bytes = msg.data
-
-            # Ensure int16 alignment
             if len(audio_bytes) % 2:
                 audio_bytes += b"\x00"
 
             data = np.frombuffer(audio_bytes, dtype=np.int16)
 
-            # Resample if needed
             if client_sample_rate != SAMPLE_RATE:
                 data = resampy.resample(
-                    data,
-                    client_sample_rate,
-                    SAMPLE_RATE
+                    data, client_sample_rate, SAMPLE_RATE
                 ).astype(np.int16)
 
-            # ==================================================
-            # WAKEWORD DETECTION
-            # ==================================================
+            # ---------------- WAKEWORD DETECTION ----------------
             if not recording:
                 predictions = owwModel.predict(
                     data.astype(np.float32) / 32768.0
@@ -145,9 +138,7 @@ async def websocket_handler(request):
                         "activations": ["Alex"]
                     }))
 
-            # ==================================================
-            # RECORDING MODE
-            # ==================================================
+            # ---------------- RECORDING ----------------
             if recording:
                 audio_buffer.extend(data.tolist())
 
@@ -161,10 +152,7 @@ async def websocket_handler(request):
                 ):
                     print("[Recording stopped]")
 
-                    wav_bytes = np.array(
-                        audio_buffer,
-                        dtype=np.int16
-                    ).tobytes()
+                    wav_bytes = np.array(audio_buffer, dtype=np.int16).tobytes()
 
                     transcript = await send_to_deepgram(wav_bytes)
 
@@ -195,14 +183,23 @@ if __name__ == "__main__":
     base_path = os.path.dirname(os.path.abspath(__file__))
     custom_model_path = os.path.join(base_path, "Aleks!!.onnx")
 
-    # -------- LOAD CUSTOM WAKEWORD ONLY --------
+    # -------- VERIFY MODEL EXISTS --------
+    if not os.path.exists(custom_model_path):
+        raise FileNotFoundError(
+            f"Custom wake word ONNX file not found: {custom_model_path}\n"
+            "Make sure Aleks!!.onnx is committed to your repo and deployed."
+        )
+
+    # -------- LOAD OPENWAKEWORD MODEL --------
     owwModel = Model(
-        custom_wakeword_models=[custom_model_path],     
+        custom_wakeword_models=[custom_model_path],
+        use_builtin_models=False,
         inference_framework="onnx"
     )
 
     print("[Loaded wakewords]", owwModel.wakeword_names)
 
+    # -------- START SERVER --------
     app = web.Application()
     app.add_routes([
         web.get("/ws", websocket_handler),
@@ -213,4 +210,3 @@ if __name__ == "__main__":
     print(f"[Server] Listening on port {port}")
 
     web.run_app(app, host="0.0.0.0", port=port)
-    
