@@ -1,5 +1,7 @@
 aiohttp
 numpy
 resampy
-requests
-# openwakeword  # replace with your actual installed version
+onnxruntime
+tqdm
+scipy
+soundfile
