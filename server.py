@@ -197,8 +197,7 @@ if __name__ == "__main__":
 
     # -------- LOAD CUSTOM WAKEWORD ONLY --------
     owwModel = Model(
-        custom_wakeword_models=[custom_model_path],
-        use_builtin_models=False,      # <-- critical: disable default models
+        custom_wakeword_models=[custom_model_path],     # <-- critical: disable default models
         inference_framework="onnx"
     )
 
