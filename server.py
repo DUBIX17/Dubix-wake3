@@ -170,10 +170,10 @@ if __name__ == "__main__":
     model_path = os.path.join(base_path, "Aleks!!.onnx")
 
     # ✅ CORRECT API
-    owwModel = Model(
-        wakeword_models=[model_path],
-        inference_framework="onnx"
-    )
+    openwakeword.Model(wakeword_models=[
+                                                os.path.join("openwakeword", "resources", "models", model_path)
+                                            ], inference_framework="onnx")
+
 
     print("[Loaded wakewords]", owwModel.wakeword_names)
 
