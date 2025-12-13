@@ -21,11 +21,8 @@ from multiprocessing.pool import ThreadPool
 from multiprocessing import Process, Queue
 import time
 import logging
-from tqdm import tqdm
 import openwakeword
-from numpy.lib.format import open_memmap
 from typing import Union, List, Callable, Deque
-import requests
 
 
 # Base class for computing audio features using Google's speech_embedding
@@ -160,7 +157,7 @@ class AudioFeatures():
 
             self.embedding_model_predict = tflite_embedding_predict
 
-        # Create databuffers with empty/random data
+        # Create databuffers
         self.raw_data_buffer: Deque = deque(maxlen=sr*10)
         self.melspectrogram_buffer = np.ones((76, 32))  # n_frames x num_features
         self.melspectrogram_max_len = 10*97  # 97 is the number of frames in 1 second of 16hz audio
@@ -168,14 +165,6 @@ class AudioFeatures():
         self.raw_data_remainder = np.empty(0)
         self.feature_buffer = self._get_embeddings(np.random.randint(-1000, 1000, 16000*4).astype(np.int16))
         self.feature_buffer_max_len = 120  # ~10 seconds of feature buffer history
-
-    def reset(self):
-        """Reset the internal buffers"""
-        self.raw_data_buffer.clear()
-        self.melspectrogram_buffer = np.ones((76, 32))
-        self.accumulated_samples = 0
-        self.raw_data_remainder = np.empty(0)
-        self.feature_buffer = self._get_embeddings(np.random.randint(-1000, 1000, 16000*4).astype(np.int16))
 
     def _get_melspectrogram(self, x: Union[np.ndarray, List], melspec_transform: Callable = lambda x: x/10 + 2):
         """
@@ -277,9 +266,8 @@ class AudioFeatures():
                 result = self._get_melspectrogram(batch)
 
             elif pool:
-                chunksize = batch.shape[0]//ncpu if batch.shape[0] >= ncpu else 1
                 result = np.array(pool.map(self._get_melspectrogram,
-                                           batch, chunksize=chunksize))
+                                           batch, chunksize=batch.shape[0]//ncpu))
 
             melspecs[i:i+batch_size, :, :] = result.squeeze()
 
@@ -339,9 +327,8 @@ class AudioFeatures():
                     result = self.embedding_model_predict(batch)
 
                 elif pool:
-                    chunksize = batch.shape[0]//ncpu if batch.shape[0] >= ncpu else 1
                     result = np.array(pool.map(self._get_embeddings_from_melspec,
-                                      batch, chunksize=chunksize))
+                                      batch, chunksize=batch.shape[0]//ncpu))
 
                 for j, ndx2 in zip(range(0, result.shape[0], n_frames), ndcs):
                     embeddings[ndx2, :, :] = result[j:j+n_frames]
@@ -537,140 +524,6 @@ def bulk_predict(
 
     # Consolidate results and return
     return {list(i.keys())[0]: list(i.values())[0] for i in results}
-
-
-def compute_features_from_generator(generator, n_total, clip_duration, output_file, device="cpu", ncpu=1):
-    """
-    Computes audio features from a generator that produces Numpy arrays of shape (batch_size, samples)
-    containing 16-bit PCM audio data.
-
-    Args:
-        generator (Generator): The generator that process the arrays of audio data
-        n_total (int): The total number of rows (audio clips) that the generator will produce.
-                       Ideally this is precise, but it can be approximate as well as the output
-                       .npy file will be automatically trimmed to remove empty values.
-        clip_duration (float): The duration (in samples) of the audio produced by the generator
-        output_file (str): The output file (.npy) containing the audio features. Note that this file
-                           will be written to using memmap arrays, so it can be substantially larger
-                           than the available system memory.
-        device (str): The device ("cpu" or "gpu") to use for computing features.
-        ncpu (int): The number of cores to use when process the audio features (if computing on CPU)
-
-    Returns:
-        None
-    """
-    # Function specific imports
-    from openwakeword.data import trim_mmap
-
-    # Create audio features object
-    F = AudioFeatures(device=device)
-
-    # Determine the output shape and create output file
-    n_feature_cols = F.get_embedding_shape(clip_duration/16000)
-    output_shape = (n_total, n_feature_cols[0], n_feature_cols[1])
-    fp = open_memmap(output_file, mode='w+', dtype=np.float32, shape=output_shape)
-
-    # Get batch size by pulling one value from the generator and store features
-    row_counter = 0
-    audio_data = next(generator)
-    batch_size = audio_data.shape[0]
-
-    if batch_size > n_total:
-        raise ValueError(f"The value of 'n_total' ({n_total}) is less than the batch size ({batch_size})."
-                         " Please increase 'n_total' to be >= batch size.")
-
-    features = F.embed_clips(audio_data, batch_size=batch_size)
-    fp[row_counter:row_counter+features.shape[0], :, :] = features
-    row_counter += features.shape[0]
-    fp.flush()
-
-    # Compute features and add data to output file
-    for audio_data in tqdm(generator, total=n_total//batch_size, desc="Computing features"):
-        if row_counter >= n_total:
-            break
-
-        features = F.embed_clips(audio_data, batch_size=batch_size, ncpu=ncpu)
-        if row_counter + features.shape[0] > n_total:
-            features = features[0:n_total-row_counter]
-
-        fp[row_counter:row_counter+features.shape[0], :, :] = features
-        row_counter += features.shape[0]
-        fp.flush()
-
-    # Trip empty rows from the mmapped array
-    trim_mmap(output_file)
-
-
-# Function to download files from a URL with a progress bar
-def download_file(url, target_directory, file_size=None):
-    """A simple function to download a file from a URL with a progress bar using only the requests library"""
-    local_filename = url.split('/')[-1]
-
-    with requests.get(url, stream=True) as r:
-        if file_size is not None:
-            progress_bar = tqdm(total=file_size, unit='iB', unit_scale=True, desc=f"{local_filename}")
-        else:
-            total_size = int(r.headers.get('content-length', 0))
-            progress_bar = tqdm(total=total_size, unit='iB', unit_scale=True, desc=f"{local_filename}")
-
-        with open(os.path.join(target_directory, local_filename), 'wb') as f:
-            for chunk in r.iter_content(chunk_size=8192):
-                f.write(chunk)
-                progress_bar.update(len(chunk))
-
-    progress_bar.close()
-
-
-# Function to download models from GitHub release assets
-def download_models(
-        model_names: List[str] = [],
-        target_directory: str = os.path.join(pathlib.Path(__file__).parent.resolve(), "resources", "models")
-        ):
-    """
-    Download the specified models from the release assets in the openWakeWord GitHub repository.
-    Uses the official urls in the MODELS dictionary in openwakeword/__init__.py.
-
-    Args:
-        model_names (List[str]): The names of the models to download (e.g., hey_jarvis_v0.1). Both ONNX and
-                                 tflite models will be downloaded. If not provided (the default),
-                                 the latest versions of all models will be downloaded.
-        target_directory (str): The directory to save the models to. Defaults to the install location
-                                of openWakeWord (i.e., the `resources/models` directory).
-    Returns:
-        None
-    """
-    if not isinstance(model_names, list):
-        raise ValueError("The model_names argument must be a list of strings")
-
-    # Always download melspectrogram and embedding models, if they don't already exist
-    if not os.path.exists(target_directory):
-        os.makedirs(target_directory)
-    for feature_model in openwakeword.FEATURE_MODELS.values():
-        if not os.path.exists(os.path.join(target_directory, feature_model["download_url"].split("/")[-1])):
-            download_file(feature_model["download_url"], target_directory)
-            download_file(feature_model["download_url"].replace(".tflite", ".onnx"), target_directory)
-
-    # Always download VAD models, if they don't already exist
-    for vad_model in openwakeword.VAD_MODELS.values():
-        if not os.path.exists(os.path.join(target_directory, vad_model["download_url"].split("/")[-1])):
-            download_file(vad_model["download_url"], target_directory)
-
-    # Get all model urls
-    official_model_urls = [i["download_url"] for i in openwakeword.MODELS.values()]
-    official_model_names = [i["download_url"].split("/")[-1] for i in openwakeword.MODELS.values()]
-
-    if model_names != []:
-        for model_name in model_names:
-            url = [i for i, j in zip(official_model_urls, official_model_names) if model_name in j]
-            if url != []:
-                if not os.path.exists(os.path.join(target_directory, url[0].split("/")[-1])):
-                    download_file(url[0], target_directory)
-                    download_file(url[0].replace(".tflite", ".onnx"), target_directory)
-    else:
-        for official_model_url in official_model_urls:
-            if not os.path.exists(os.path.join(target_directory, official_model_url.split("/")[-1])):
-                download_file(official_model_url, target_directory)
-                download_file(official_model_url.replace(".tflite", ".onnx"), target_directory)
 
 
 # Handle deprecated arguments and naming (thanks to https://stackoverflow.com/a/74564394)
