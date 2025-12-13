@@ -1,9 +1,7 @@
 aiohttp
 numpy
 resampy
-onnxruntime
-tqdm
 scipy
 soundfile
 requests
-sklearn
+
