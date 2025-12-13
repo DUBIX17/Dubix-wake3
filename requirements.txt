@@ -5,3 +5,4 @@ onnxruntime
 tqdm
 scipy
 soundfile
+requests
