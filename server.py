@@ -193,6 +193,7 @@ if __name__ == "__main__":
     # -------- LOAD OPENWAKEWORD MODEL --------
     owwModel = Model(
         custom_wakeword_models=[custom_model_path],
+        use_builtin_models=False,     
         inference_framework="onnx"
     )
 
